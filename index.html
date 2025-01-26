@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Perfect Tetris</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <link href="https://fonts.cdnfonts.com/css/caviar-dreams" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: 'Caviar Dreams', sans-serif;
+            user-select: none;
+        }
+
+        body {
+            margin: 0;
+            background: #c0c0c0;
+            touch-action: manipulation;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .page {
+            width: 100%;
+            height: 100vh;
+            padding: 20px;
+            position: fixed;
+            top: 0;
+            left: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: silver;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        button {
+            background: #f5f5dc;
+            border: 3px solid #654321;
+            color: #654321;
+            padding: 15px 25px;
+            margin: 10px;
+            font-size: 1.2rem;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 220px;
+            max-width: 80%;
+            transition: transform 0.1s;
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        #gameCanvas {
+            background: #f5f5dc;
+            border: 5px solid #654321;
+            margin: 20px 0;
+        }
+
+        .game-ui {
+            text-align: center;
+            font-size: 1.4rem;
+            color: #654321;
+            width: 100%;
+            margin-top: 15px;
+        }
+
+        #pauseMenu, #gameOverMenu {
+            background: rgba(245, 245, 220, 0.95);
+            backdrop-filter: blur(4px);
+        }
+
+        #scoreList {
+            margin: 20px 0;
+            font-size: 1.2rem;
+        }
+
+        .mobile-controls {
+            display: none;
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            gap: 10px;
+        }
+
+        @media (max-width: 600px) {
+            button {
+                font-size: 1.1rem;
+                padding: 12px 20px;
+                width: 200px;
+            }
+
+            #gameCanvas {
+                width: 95vw;
+                height: 60vh;
+            }
+
+            .mobile-controls {
+                display: flex;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Main Menu -->
+    <div id="mainMenu" class="page">
+        <h1>TETRIS</h1>
+        <button onclick="showPage('difficulty')">PLAY</button>
+        <button onclick="showScores()">HIGH SCORES</button>
+    </div>
+
+    <!-- Difficulty Selection -->
+    <div id="difficulty" class="page hidden">
+        <h2>Select Difficulty</h2>
+        <button onclick="startGame(1000)">BETA</button>
+        <button onclick="startGame(700)">ALPHA</button>
+        <button onclick="startGame(400)">SIGMA</button>
+        <button onclick="showPage('mainMenu')">BACK</button>
+    </div>
+
+    <!-- Game Screen -->
+    <div id="gameScreen" class="page hidden">
+        <canvas id="gameCanvas"></canvas>
+        <div class="game-ui">
+            <div id="score">SCORE: 0</div>
+            <button onclick="togglePause()">PAUSE</button>
+        </div>
+        <div class="mobile-controls">
+            <button class="rotate-btn" ontouchstart="rotatePiece()">↻</button>
+        </div>
+    </div>
+
+    <!-- Pause Menu -->
+    <div id="pauseMenu" class="page hidden">
+        <h2>PAUSED</h2>
+        <button onclick="togglePause()">RESUME</button>
+        <button onclick="exitToMenu()">MAIN MENU</button>
+    </div>
+
+    <!-- Game Over Menu -->
+    <div id="gameOverMenu" class="page hidden">
+        <h2>GAME OVER!</h2>
+        <p>Final Score: <span id="finalScore">0</span></p>
+        <button onclick="retryGame()">RETRY</button>
+        <button onclick="exitToMenu()">MAIN MENU</button>
+    </div>
+
+    <!-- High Scores -->
+    <div id="scores" class="page hidden">
+        <h2>HIGH SCORES</h2>
+        <div id="scoreList"></div>
+        <button onclick="showPage('mainMenu')">BACK</button>
+    </div>
+
+    <script>
+        const SHAPES = [
+            [[1,1,1,1]],    // I
+            [[1,1],[1,1]],  // O
+            [[1,1,1],[0,1,0]],  // T
+            [[1,1,0],[0,1,1]],  // S
+            [[0,1,1],[1,1,0]],  // Z
+            [[1,0,0],[1,1,1]],  // J
+            [[0,0,1],[1,1,1]]   // L
+        ];
+
+        const COLORS = ['#00f0f0', '#f0f000', '#a000f0', 
+                       '#00f000', '#f00000', '#0000f0', '#f0a000'];
+        
+        let canvas, ctx;
+        let currentPiece, nextPiece;
+        let score = 0;
+        let gameSpeed = 1000;
+        let isPaused = false;
+        let lastUpdate = 0;
+        let board = Array(20).fill().map(() => Array(10).fill(0));
+        let gameLoopID;
+        let currentDifficulty = 1000;
+
+        function initGame() {
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+            canvas.width = 300;
+            canvas.height = 600;
+            spawnNewPiece();
+            gameLoopID = requestAnimationFrame(gameLoop);
+        }
+
+        function spawnNewPiece() {
+            currentPiece = {
+                shape: SHAPES[Math.floor(Math.random() * SHAPES.length)],
+                color: COLORS[Math.floor(Math.random() * COLORS.length)],
+                x: 4,
+                y: 0
+            };
+            if (collision()) gameOver();
+        }
+
+        function gameLoop(timestamp) {
+            if(isPaused) return;
+            
+            const deltaTime = timestamp - lastUpdate;
+            if(deltaTime > gameSpeed) {
+                moveDown();
+                lastUpdate = timestamp;
+            }
+            
+            draw();
+            gameLoopID = requestAnimationFrame(gameLoop);
+        }
+
+        function moveDown() {
+            currentPiece.y++;
+            if(collision()) {
+                currentPiece.y--;
+                lockPiece();
+                clearLines();
+                spawnNewPiece();
+            }
+        }
+
+        function collision() {
+            return currentPiece.shape.some((row, y) => 
+                row.some((value, x) => {
+                    const newX = currentPiece.x + x;
+                    const newY = currentPiece.y + y;
+                    return value && (newX < 0 || newX >= 10 || 
+                                   newY >= 20 || board[newY]?.[newX]);
+                })
+            );
+        }
+
+        function lockPiece() {
+            currentPiece.shape.forEach((row, y) => {
+                row.forEach((value, x) => {
+                    if(value) board[currentPiece.y + y][currentPiece.x + x] = currentPiece.color;
+                });
+            });
+        }
+
+        function clearLines() {
+            let linesCleared = 0;
+            for(let y = board.length -1; y >= 0; y--) {
+                if(board[y].every(cell => cell)) {
+                    board.splice(y, 1);
+                    board.unshift(Array(10).fill(0));
+                    linesCleared++;
+                    y++;
+                }
+            }
+            if(linesCleared) {
+                score += linesCleared * 100;
+                document.getElementById('score').textContent = `SCORE: ${score}`;
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw board with proper borders
+            board.forEach((row, y) => {
+                row.forEach((color, x) => {
+                    if(color) {
+                        ctx.fillStyle = color;
+                        ctx.fillRect(x * 30, y * 30, 30, 30);
+                        ctx.strokeStyle = shadeColor(color, -20);
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(x * 30, y * 30, 30, 30);
+                    }
+                });
+            });
+            
+            // Draw current piece with borders
+            currentPiece.shape.forEach((row, y) => {
+                row.forEach((value, x) => {
+                    if(value) {
+                        ctx.fillStyle = currentPiece.color;
+                        ctx.fillRect((currentPiece.x + x) * 30, 
+                                   (currentPiece.y + y) * 30, 30, 30);
+                        ctx.strokeStyle = shadeColor(currentPiece.color, -20);
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect((currentPiece.x + x) * 30, 
+                                    (currentPiece.y + y) * 30, 30, 30);
+                    }
+                });
+            });
+        }
+
+        function shadeColor(color, percent) {
+            const num = parseInt(color.replace('#',''), 16);
+            const amt = Math.round(2.55 * percent);
+            const r = Math.min(255, Math.max(0, (num >> 16) + amt));
+            const g = Math.min(255, Math.max(0, (num >> 8 & 0x00FF) + amt));
+            const b = Math.min(255, Math.max(0, (num & 0x0000FF) + amt));
+            return `#${(r << 16 | g << 8 | b).toString(16).padStart(6, '0')}`;
+        }
+
+        function showPage(pageId) {
+            document.querySelectorAll('.page').forEach(page => 
+                page.classList.add('hidden')
+            );
+            document.getElementById(pageId).classList.remove('hidden');
+        }
+
+        function togglePause() {
+            isPaused = !isPaused;
+            document.getElementById('pauseMenu').classList.toggle('hidden');
+            if(!isPaused) gameLoopID = requestAnimationFrame(gameLoop);
+        }
+
+        function exitToMenu() {
+            cancelAnimationFrame(gameLoopID);
+            saveScore();
+            showPage('mainMenu');
+        }
+
+        function gameOver() {
+            cancelAnimationFrame(gameLoopID);
+            saveScore();
+            document.getElementById('finalScore').textContent = score;
+            showPage('gameOverMenu');
+        }
+
+        function retryGame() {
+            board = Array(20).fill().map(() => Array(10).fill(0));
+            score = 0;
+            document.getElementById('score').textContent = 'SCORE: 0';
+            showPage('gameScreen');
+            initGame();
+        }
+
+        function saveScore() {
+            const scores = JSON.parse(localStorage.getItem('tetrisScores') || '[]');
+            if(score > 0) scores.push(score);
+            localStorage.setItem('tetrisScores', JSON.stringify(
+                [...new Set(scores)].sort((a,b) => b-a).slice(0,5)
+            ));
+        }
+
+        function showScores() {
+            const scores = JSON.parse(localStorage.getItem('tetrisScores') || '[]');
+            document.getElementById('scoreList').innerHTML = scores
+                .map((s, i) => `<div>${i+1}. ${s}</div>`)
+                .join('');
+            showPage('scores');
+        }
+
+        // Controls
+        document.addEventListener('keydown', e => {
+            if(!isPaused) {
+                switch(e.key) {
+                    case 'ArrowLeft': 
+                        currentPiece.x--;
+                        if(collision()) currentPiece.x++;
+                        break;
+                    case 'ArrowRight': 
+                        currentPiece.x++;
+                        if(collision()) currentPiece.x--;
+                        break;
+                    case 'ArrowDown': 
+                        currentPiece.y++;
+                        if(collision()) currentPiece.y--;
+                        break;
+                    case 'ArrowUp': 
+                        rotatePiece();
+                        break;
+                }
+                draw();
+            }
+        });
+
+        function rotatePiece() {
+            const rotated = currentPiece.shape[0].map((_, i) =>
+                currentPiece.shape.map(row => row[i]).reverse()
+            );
+            const previousShape = currentPiece.shape;
+            currentPiece.shape = rotated;
+            if(collision()) currentPiece.shape = previousShape;
+            draw();
+        }
+
+        function startGame(speed) {
+            currentDifficulty = speed;
+            gameSpeed = speed;
+            board = Array(20).fill().map(() => Array(10).fill(0));
+            score = 0;
+            document.getElementById('score').textContent = 'SCORE: 0';
+            showPage('gameScreen');
+            initGame();
+        }
+
+        // Initialize
+        showPage('mainMenu');
+    </script>
+</body>
+</html>
